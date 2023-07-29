@@ -1,4 +1,4 @@
-# Simple but Practical Thread Pool
+# Simple, Practical, Light-Weight Thread Pool
 Easy to use, light-weight, practical (Only 69 Lines!)
 
 Get rid of those annoying enhanced functionalities that you don't need!
