@@ -1,4 +1,6 @@
 # ThreadPool
+Get rid of those annoying enhanced functionalities that you don't need!
+
 One of The simplest Thread Pool Implementation
 
 functions:
