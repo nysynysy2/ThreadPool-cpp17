@@ -1,4 +1,5 @@
-#pragma once
+#ifndef _SIMPLE_THREAD_POOL_
+#define _SIMPLE_THREAD_POOL_
 #include <vector>
 #include <queue>
 #include <thread>
@@ -7,6 +8,14 @@
 #include <mutex>
 #include <future>
 class ThreadPool {
+	size_t cacheCap;
+	std::atomic<size_t> working_count;
+	std::vector<std::thread> threads;
+	std::queue< std::packaged_task<void()> > cache;
+	std::mutex pool_lock;
+	std::condition_variable add_cv, end_cv;
+	void _exec();
+	bool stop;
 public:
 	ThreadPool(size_t thread_count = std::thread::hardware_concurrency(), size_t cap = ULLONG_MAX);
 	ThreadPool(ThreadPool&&) = delete;
@@ -15,16 +24,6 @@ public:
 	template<class Fn, class... Args> auto addTask(Fn&& func, Args&&... args);
 	template<class Fn, class... Args, class Dura> auto addTask_delay(Dura dura, Fn&& func, Args&&... args);
 	void wait();
-private:
-	size_t cacheCap;
-	std::atomic<size_t> working_count;
-	std::vector<std::thread> threads;
-	std::queue< std::packaged_task<void()> > cache;
-	std::mutex pool_lock;
-	std::condition_variable add_cv;
-	std::condition_variable end_cv;
-	void _exec();
-	bool stop;
 };
 ThreadPool::ThreadPool(size_t thread_count, size_t cap) :stop(false), cacheCap(cap) {
 	while (thread_count--) threads.emplace_back(&ThreadPool::_exec,this);
@@ -67,3 +66,4 @@ ThreadPool::~ThreadPool() {
 	add_cv.notify_all();
 	for (auto& t : threads) t.join();
 }
+#endif
