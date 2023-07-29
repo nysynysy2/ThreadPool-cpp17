@@ -75,11 +75,12 @@ public:
 	std::atomic<WorkerStatus> m_status;
 	_Worker(ThreadPool* parentPool);
 	_Worker(const _Worker& other);
-	void operator()();
+	void execThread();
 };
 
-_Worker::_Worker(ThreadPool* parentPool):m_parentPool(parentPool)
+_Worker::_Worker(ThreadPool* parentPool)
 {
+	this->m_parentPool = parentPool;
 	m_status.store(WorkerStatus::sleeping);
 }
 
@@ -89,7 +90,7 @@ _Worker::_Worker(const _Worker& other)
 	m_status.store(other.m_status);
 }
 
-void _Worker::operator()()
+void _Worker::execThread()
 {
 	while (m_status.load() != WorkerStatus::terminated)
 	{
@@ -122,8 +123,8 @@ ThreadPool::ThreadPool(size_t min, size_t max, size_t queueCap)
 	this->m_status.store(PoolStatus::working);
 	while (min--) 
 	{
-		this->workers.emplace_back(this);
-		this->threadPool.push_back(std::thread(std::ref(this->workers.back())));
+		this->workers.push_back(_Worker(this));
+		this->threadPool.push_back(std::thread(&_Worker::execThread, &(this->workers.back())));
 	}
 }
 
@@ -196,7 +197,7 @@ void ThreadPool::_adjustThreadAmount()
 			for (int i = 1; i <= adj; ++i)
 			{
 				this->workers.emplace_back(this);
-				this->threadPool.push_back(std::thread(std::ref(this->workers.back())));
+				this->threadPool.push_back(std::thread(&_Worker::execThread, &(this->workers.back())));
 				++(this->existAmount);
 				if (this->existAmount.load() == maxThreadAmount) return;
 			}
