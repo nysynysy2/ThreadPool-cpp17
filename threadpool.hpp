@@ -7,6 +7,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <mutex>
+#include <list>
 #include <type_traits>
 #include <functional>
 #include <future>
@@ -50,10 +51,10 @@ public:
 	ThreadPool(ThreadPool&&) = delete;
 	
 	template<class Fn, class... Args>
-	std::shared_future<typename std::invoke_result<Fn, Args...>::type> addTask(Fn&& func, Args&&... args);
+	std::shared_future<typename std::invoke_result<Fn, Args...>::type> addTask(Fn func, Args&&... args);
 
 	template<class Fn, class... Args, class Dura>
-	std::shared_future<typename std::invoke_result<Fn, Args...>::type> addTask(Dura&& dura, Fn&& func, Args&&... args);
+	std::shared_future<typename std::invoke_result<Fn, Args...>::type> addTask(Dura dura, Fn func, Args&&... args);
 
 	size_t getWorkingAmount()const;
 	size_t getExistAmount()const;
@@ -69,36 +70,43 @@ private:
 
 class _Worker
 {
-	friend class ThreadPool;
-	ThreadPool& m_parentPool;
+public:
+	ThreadPool* m_parentPool;
 	std::atomic<WorkerStatus> m_status;
-	_Worker(ThreadPool& parentPool);
+	_Worker(ThreadPool* parentPool);
+	_Worker(const _Worker& other);
 	void operator()();
 };
 
-_Worker::_Worker(ThreadPool& parentPool):m_parentPool(parentPool)
+_Worker::_Worker(ThreadPool* parentPool):m_parentPool(parentPool)
 {
 	m_status.store(WorkerStatus::sleeping);
+}
+
+_Worker::_Worker(const _Worker& other)
+{
+	m_parentPool = other.m_parentPool;
+	m_status.store(other.m_status);
 }
 
 void _Worker::operator()()
 {
 	while (m_status.load() != WorkerStatus::terminated)
 	{
-		std::unique_lock<std::mutex> locker(m_parentPool.poolMutex);
-		m_parentPool.addTaskCV.wait(locker, [=] {return !(this->m_parentPool.taskQueue.empty()) 
+		std::unique_lock<std::mutex> locker(m_parentPool->poolMutex);
+		m_parentPool->addTaskCV.wait(locker, [=] {return !(this->m_parentPool->taskQueue.empty()) 
 			|| this->m_status.load() == WorkerStatus::terminated; 
 		});
 		if (this->m_status.load() == WorkerStatus::terminated) return;
 		this->m_status.store(WorkerStatus::working);
-		auto task = std::move(this->m_parentPool.taskQueue.front());
-		this->m_parentPool.taskQueue.pop();
+		std::packaged_task<void(void)> task = std::move(this->m_parentPool->taskQueue.front());
+		this->m_parentPool->taskQueue.pop();
 		locker.unlock();
-		++(this->m_parentPool.workingAmount);
+		++(this->m_parentPool->workingAmount);
 		task();
-		--(this->m_parentPool.workingAmount);
+		--(this->m_parentPool->workingAmount);
 		this->m_status.store(WorkerStatus::sleeping);
-		this->m_parentPool.endTaskCV.notify_all();
+		this->m_parentPool->endTaskCV.notify_all();
 	}
 }
 
@@ -114,28 +122,31 @@ ThreadPool::ThreadPool(size_t min, size_t max, size_t queueCap)
 	this->m_status.store(PoolStatus::working);
 	while (min--) 
 	{
-		this->workers.push_back(_Worker(*this));
+		this->workers.emplace_back(this);
 		this->threadPool.push_back(std::thread(std::ref(this->workers.back())));
 	}
 }
 
 template<class Fn, class... Args>
-std::shared_future<typename std::invoke_result<Fn, Args...>::type> ThreadPool::addTask(Fn&& func, Args&&... args)
+std::shared_future<typename std::invoke_result<Fn, Args...>::type> ThreadPool::addTask(Fn func, Args&&... args)
 {
+	std::future<typename std::invoke_result<Fn, Args...>::type> m_future = std::async(std::launch::deferred, func, std::forward<Args>(args)...);
+	std::shared_future<typename std::invoke_result<Fn, Args...>::type> s_future = m_future.share();
+	auto f = [s_future]()mutable {s_future.get(); };
+	std::packaged_task<void(void)> task(f);
 	std::unique_lock<std::mutex> locker(this->poolMutex);
-	this->endTaskCV.wait(locker, [=] {return this->taskQueue.size() <= this->queueCapacity});
-	auto m_future = std::async(std::launch::deferred, std::forward<Fn>(func), std::forward<Args>(args)...);
-	auto s_future = m_future.share();
-	std::packaged_task<void(void)> task([s_future] {s_future.wait(); });
+	this->endTaskCV.wait(locker, [=] {return this->taskQueue.size() <= this->queueCapacity; });
 	this->taskQueue.push(std::move(task));
+	locker.unlock();
+	this->addTaskCV.notify_one();
 	return s_future;
 }
 
 template<class Fn, class... Args, class Dura>
-std::shared_future<typename std::invoke_result<Fn, Args...>::type> ThreadPool::addTask(Dura&& dura, Fn&& func, Args&&... args)
+std::shared_future<typename std::invoke_result<Fn, Args...>::type> ThreadPool::addTask(Dura dura, Fn func, Args&&... args)
 {
 	return this->addTask([&] {std::this_thread::sleep_for(dura);
-		return std::forward<Fn>(func)(std::forward<Args>(args)...); 
+		return func(std::forward<Args>(args)...); 
 	});
 }
 
@@ -184,7 +195,7 @@ void ThreadPool::_adjustThreadAmount()
 			size_t adj = this->maxThreadAmount - this->existAmount.load() > this->adjustAmount.load() ? this->adjustAmount.load() : this->maxThreadAmount - this->existAmount.load();
 			for (int i = 1; i <= adj; ++i)
 			{
-				this->workers.push_back(_Worker(*this));
+				this->workers.emplace_back(this);
 				this->threadPool.push_back(std::thread(std::ref(this->workers.back())));
 				++(this->existAmount);
 				if (this->existAmount.load() == maxThreadAmount) return;
