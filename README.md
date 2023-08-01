@@ -4,7 +4,7 @@ Easy to use, simple, light-weight (Only One header File!)
 
 Functionalities:
 
-1, Thread Amount Dynamic Adjustion
+1, Dynamic Adjust Thread Count
 
 2, Create Delay Task
 
