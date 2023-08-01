@@ -22,6 +22,7 @@ public:
 	void setMinThreadCount(size_t min) { assert(min <= max_threads); min_threads = min; }
 	void setMaxThreadCount(size_t max) { assert(max >= min_threads); max_threads = max; }
 	void setDynamicAdjustEnable(bool enable) { dynamic_adjust_enable = enable; }
+	bool isDynamicAdjustEnable() { return dynamic_adjust_enable; }
 	void wait();
 	void exit();
 private:
