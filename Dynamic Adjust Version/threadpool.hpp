@@ -1,5 +1,5 @@
-#ifndef _SIMPLE_THREAD_POOL_
-#define _SIMPLE_THREAD_POOL_
+#ifndef _DYNAMIC_THREAD_POOL_
+#define _DYNAMIC_THREAD_POOL_
 #include <vector>
 #include <queue>
 #include <thread>
@@ -11,12 +11,12 @@
 #include <algorithm>
 class ThreadPool {
 public:
-	ThreadPool(size_t min = std::thread::hardware_concurrency(), size_t max = std::thread::hardware_concurrency(),bool dynamicAdjustEnable = true, std::chrono::milliseconds dynamic_dura = std::chrono::milliseconds(5000), size_t cap = ULLONG_MAX);
+	ThreadPool(size_t min = std::thread::hardware_concurrency(), size_t max = 100,bool dynamicAdjustEnable = true, size_t dynamic_dura_ms = 5000, size_t cap = ULLONG_MAX);
 	ThreadPool(ThreadPool&&) = delete;
 	ThreadPool(const ThreadPool&) = delete;
 	~ThreadPool();
 	template<class Fn, class... Args> auto addTask(Fn&& func, Args&&... args);
-	template<class Fn, class... Args, class Dura> auto addTask_delay(Dura dura, Fn&& func, Args&&... args);
+	template<class Fn, class... Args> auto addTask_delay(size_t dura_ms, Fn&& func, Args&&... args);
 	void wait();
 	void exit();
 private:
@@ -36,8 +36,8 @@ private:
 	size_t max_threads;
 	std::chrono::microseconds adjust_dura;
 };
-ThreadPool::ThreadPool(size_t min, size_t max, bool dynamicAdjustEnable, std::chrono::milliseconds dynamic_dura, size_t cap)
-	:stop(false), cacheCap(cap), adjust_dura(dynamic_dura), min_threads(min), max_threads(max), dynamic_adjust_enable(dynamicAdjustEnable){
+ThreadPool::ThreadPool(size_t min, size_t max, bool dynamicAdjustEnable, size_t dynamic_dura_ms, size_t cap)
+	:stop(false), cacheCap(cap), adjust_dura(std::chrono::milliseconds(dynamic_dura_ms)), min_threads(min), max_threads(max), dynamic_adjust_enable(dynamicAdjustEnable){
 	assert(min <= max);
 	exist_count.store(0);
 	working_count.store(0);
@@ -60,8 +60,8 @@ template<class Fn, class... Args> auto ThreadPool::addTask(Fn&& func, Args&&... 
 	add_cv.notify_one();
 	return ret;
 }
-template<class Fn, class... Args, class Dura> auto ThreadPool::addTask_delay(Dura dura, Fn&& func, Args&&... args) {
-	return addTask([&] {std::this_thread::sleep_for(dura); return std::forward<Fn>(func)(std::forward<Args>(args)...); });
+template<class Fn, class... Args> auto ThreadPool::addTask_delay(size_t delay_ms, Fn&& func, Args&&... args) {
+	return addTask([&,delay_ms] {std::this_thread::sleep_for(std::chrono::microseconds(delay_ms)); return std::forward<Fn>(func)(std::forward<Args>(args)...); });
 }
 void ThreadPool::_exec() {
 	while (!stop) {
