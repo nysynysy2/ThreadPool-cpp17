@@ -27,8 +27,8 @@ void close(); //close the thread pool;
 
 size_t getExistThreadCount();
 size_t getWorkingThreadCount();
-void setMinThreadCount();
-void setMaxThreadCount();
+void setMinThreadCount(size_t min);
+void setMaxThreadCount(size_t max);
 
 void setDynamicAdjustEnable(bool enable);
 bool isDynamicAdjustEnable();
