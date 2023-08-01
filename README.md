@@ -1,13 +1,15 @@
 # Simple Dynamic-Adjust Super-Light-Weight, Practical Thread Pool
 Easy to use, simple, light-weight (Only One header File!)
 
+
 Functionalities:
 
-Thread Amount Dynamic Adjustion
+1, Thread Amount Dynamic Adjustion
 
-Create Delay Task
+2, Create Delay Task
 
-Automatic Manage Threads' Resources
+3, Automatic Manage Threads' Resources
+
 
 Usage:
 
