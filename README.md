@@ -1,4 +1,4 @@
-# Simple Dynamic-Adjust Super-Light-Weight, Practical Thread Pool
+# Simple Dynamic-Adjust Super-Light-Weightl Thread Pool
 Easy to use, simple, light-weight (Only One header File!)
 
 
@@ -24,6 +24,14 @@ std::future addTask_delay(size_t delay_ms, yourFunction,yourArguments...);//mill
 
 void wait(); //wait for all the working threads to finish their works.
 void close(); //close the thread pool;
+
+size_t getExistThreadCount();
+size_t getWorkingThreadCount();
+void setMinThreadCount();
+void setMaxThreadCount();
+
+void setDynamicAdjustEnable(bool enable);
+bool isDynamicAdjustEnable();
 ```
 
 Simple Version:
