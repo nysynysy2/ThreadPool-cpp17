@@ -1,5 +1,5 @@
-# Simple Dynamic-Adjust Super-Light-Weightl Thread Pool (C++17)
-Easy to use, simple, light-weight (Only One header File!)
+# Header Only DynamicAdjust LightWeightl Thread Pool (C++17)
+Easy to use, simple, light-weight header only
 
 
 Functionalities:
