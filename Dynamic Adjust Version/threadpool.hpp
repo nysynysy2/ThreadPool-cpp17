@@ -11,12 +11,17 @@
 #include <algorithm>
 class ThreadPool {
 public:
-	ThreadPool(size_t min = std::thread::hardware_concurrency(), size_t max = 100,bool dynamicAdjustEnable = true, size_t dynamic_dura_ms = 5000, size_t cap = ULLONG_MAX);
+	ThreadPool(size_t min = std::thread::hardware_concurrency(), size_t max = 100, bool dynamicAdjustEnable = true, size_t dynamic_dura_ms = 5000, size_t cap = ULLONG_MAX);
 	ThreadPool(ThreadPool&&) = delete;
 	ThreadPool(const ThreadPool&) = delete;
 	~ThreadPool();
 	template<class Fn, class... Args> auto addTask(Fn&& func, Args&&... args);
 	template<class Fn, class... Args> auto addTask_delay(size_t dura_ms, Fn&& func, Args&&... args);
+	size_t getExistThreadCount()const { return exist_count.load(); }
+	size_t getWorkingThreadCount()const { return working_count.load(); }
+	void setMinThreadCount(size_t min) { assert(min <= max_threads); min_threads = min; }
+	void setMaxThreadCount(size_t max) { assert(max >= min_threads); max_threads = max; }
+	void setDynamicAdjustEnable(bool enable) { dynamic_adjust_enable = enable; }
 	void wait();
 	void exit();
 private:
@@ -37,7 +42,7 @@ private:
 	std::chrono::microseconds adjust_dura;
 };
 ThreadPool::ThreadPool(size_t min, size_t max, bool dynamicAdjustEnable, size_t dynamic_dura_ms, size_t cap)
-	:stop(false), cacheCap(cap), adjust_dura(std::chrono::milliseconds(dynamic_dura_ms)), min_threads(min), max_threads(max), dynamic_adjust_enable(dynamicAdjustEnable){
+	:stop(false), cacheCap(cap), adjust_dura(std::chrono::milliseconds(dynamic_dura_ms)), min_threads(min), max_threads(max), dynamic_adjust_enable(dynamicAdjustEnable) {
 	assert(min <= max);
 	exist_count.store(0);
 	working_count.store(0);
@@ -46,7 +51,7 @@ ThreadPool::ThreadPool(size_t min, size_t max, bool dynamicAdjustEnable, size_t 
 		threads.emplace_back(&ThreadPool::_exec, this);
 		++exist_count;
 	}
-	if(dynamic_adjust_enable) threads.emplace_back(&ThreadPool::_dynamicAdjust,this);
+	if (dynamic_adjust_enable) threads.emplace_back(&ThreadPool::_dynamicAdjust, this);
 }
 template<class Fn, class... Args> auto ThreadPool::addTask(Fn&& func, Args&&... args) {
 	auto ptr = std::make_shared< std::packaged_task<typename std::invoke_result<Fn, Args...>::type()> >(
@@ -61,12 +66,12 @@ template<class Fn, class... Args> auto ThreadPool::addTask(Fn&& func, Args&&... 
 	return ret;
 }
 template<class Fn, class... Args> auto ThreadPool::addTask_delay(size_t delay_ms, Fn&& func, Args&&... args) {
-	return addTask([&,delay_ms] {std::this_thread::sleep_for(std::chrono::microseconds(delay_ms)); return std::forward<Fn>(func)(std::forward<Args>(args)...); });
+	return addTask([&, delay_ms] {std::this_thread::sleep_for(std::chrono::microseconds(delay_ms)); return std::forward<Fn>(func)(std::forward<Args>(args)...); });
 }
 void ThreadPool::_exec() {
-	while (!stop) {
+	while ((!stop) && dynamic_adjust_enable) {
 		std::unique_lock<std::mutex> locker(pool_lock);
-		add_cv.wait(locker, [=] {return !(cache.empty()) || stop || kill_count.load()!=0; });
+		add_cv.wait(locker, [=] {return !(cache.empty()) || stop || kill_count.load() != 0; });
 		if (stop) return;
 		if (kill_count.load() != 0) {
 			--kill_count;
@@ -90,9 +95,9 @@ void ThreadPool::_dynamicAdjust() {
 	while (!stop) {
 		std::unique_lock<std::mutex> locker(pool_lock);
 		if (cache.size() > exist_count && exist_count < max_threads) {
-			size_t adjust_count = std::min(cache.size(),max_threads - exist_count.load());
+			size_t adjust_count = std::min(cache.size(), max_threads - exist_count.load());
 			for (size_t count = 0; count < adjust_count; ++count) {
-				threads.emplace_back(&ThreadPool::_exec,this);
+				threads.emplace_back(&ThreadPool::_exec, this);
 				++exist_count;
 			}
 			locker.unlock();
