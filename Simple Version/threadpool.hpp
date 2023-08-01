@@ -22,7 +22,7 @@ public:
 	ThreadPool(const ThreadPool&) = delete;
 	~ThreadPool();
 	template<class Fn, class... Args> auto addTask(Fn&& func, Args&&... args);
-	template<class Fn, class... Args, class Dura> auto addTask_delay(Dura dura, Fn&& func, Args&&... args);
+	template<class Fn, class... Args> auto addTask_delay(size_t delay_ms, Fn&& func, Args&&... args);
 	void wait();
 };
 ThreadPool::ThreadPool(size_t thread_count, size_t cap) :stop(false), cacheCap(cap) {
@@ -40,8 +40,8 @@ template<class Fn, class... Args> auto ThreadPool::addTask(Fn&& func, Args&&... 
 	add_cv.notify_one();
 	return ret;
 }
-template<class Fn, class... Args, class Dura> auto ThreadPool::addTask_delay(Dura dura, Fn&& func, Args&&... args) {
-	return addTask([&] {std::this_thread::sleep_for(dura); return std::forward<Fn>(func)(std::forward<Args>(args)...); });
+template<class Fn, class... Args> auto ThreadPool::addTask_delay(size_t delay_ms, Fn&& func, Args&&... args) {
+	return addTask([&,delay_ms] {std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms)); return std::forward<Fn>(func)(std::forward<Args>(args)...); });
 }
 void ThreadPool::_exec() {
 	while (!stop) {
