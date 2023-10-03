@@ -1,130 +1,130 @@
-#ifndef _DYNAMIC_THREAD_POOL_
-#define _DYNAMIC_THREAD_POOL_
-#include <vector>
-#include <queue>
+#ifndef _NYSY_THREAD_POOL_
+#define _NYSY_THREAD_POOL_
+#include <memory>
 #include <thread>
 #include <atomic>
 #include <condition_variable>
-#include <mutex>
+#include <list>
 #include <future>
+#include <functional>
+#include <mutex>
+#include <chrono>
 #include <cassert>
-#include <algorithm>
-class ThreadPool {
-public:
-	ThreadPool(size_t min = std::thread::hardware_concurrency(), size_t max = 100, bool dynamicAdjustEnable = true, size_t dynamic_dura_ms = 5000, size_t cap = ULLONG_MAX);
-	ThreadPool(ThreadPool&&) = delete;
-	ThreadPool(const ThreadPool&) = delete;
-	~ThreadPool();
-	template<class Fn, class... Args> auto addTask(Fn&& func, Args&&... args);
-	template<class Fn, class... Args> auto addTask_delay(size_t dura_ms, Fn&& func, Args&&... args);
-	size_t getExistThreadCount()const { return exist_count.load(); }
-	size_t getWorkingThreadCount()const { return working_count.load(); }
-	void setMinThreadCount(size_t min) { assert(min <= max_threads); min_threads = min; }
-	void setMaxThreadCount(size_t max) { assert(max >= min_threads); max_threads = max; }
-	void setDynamicAdjustEnable(bool enable) { dynamic_adjust_enable = enable; }
-	bool isDynamicAdjustEnable() { return dynamic_adjust_enable; }
-	void wait();
-	void exit();
-private:
-	size_t cacheCap;
-	std::atomic<size_t> working_count;
-	std::atomic<size_t> exist_count;
-	std::atomic<size_t> kill_count;
-	std::vector<std::thread> threads;
-	std::queue< std::packaged_task<void()> > cache;
-	std::mutex pool_lock;
-	std::condition_variable add_cv, end_cv;
-	void _dynamicAdjust();
-	void _exec();
-	bool stop;
-	bool dynamic_adjust_enable;
-	size_t min_threads;
-	size_t max_threads;
-	std::chrono::microseconds adjust_dura;
-};
-ThreadPool::ThreadPool(size_t min, size_t max, bool dynamicAdjustEnable, size_t dynamic_dura_ms, size_t cap)
-	:stop(false), cacheCap(cap), adjust_dura(std::chrono::milliseconds(dynamic_dura_ms)), min_threads(min), max_threads(max), dynamic_adjust_enable(dynamicAdjustEnable) {
-	assert(min <= max);
-	exist_count.store(0);
-	working_count.store(0);
-	kill_count.store(0);
-	while (min--) {
-		threads.emplace_back(&ThreadPool::_exec, this);
-		++exist_count;
-	}
-	if (dynamic_adjust_enable) threads.emplace_back(&ThreadPool::_dynamicAdjust, this);
-}
-template<class Fn, class... Args> auto ThreadPool::addTask(Fn&& func, Args&&... args) {
-	auto ptr = std::make_shared< std::packaged_task<typename std::invoke_result<Fn, Args...>::type()> >(
-		std::bind(std::forward<Fn>(func), std::forward<Args>(args)...)
-	);
-	auto ret = ptr->get_future();
-	std::unique_lock<std::mutex> locker(pool_lock);
-	end_cv.wait(locker, [=] {return cache.size() <= cacheCap; });
-	cache.emplace([=]()mutable {(*ptr)(); });
-	locker.unlock();
-	add_cv.notify_one();
-	return ret;
-}
-template<class Fn, class... Args> auto ThreadPool::addTask_delay(size_t delay_ms, Fn&& func, Args&&... args) {
-	return addTask([&, delay_ms] {std::this_thread::sleep_for(std::chrono::microseconds(delay_ms)); return std::forward<Fn>(func)(std::forward<Args>(args)...); });
-}
-void ThreadPool::_exec() {
-	while ((!stop) && dynamic_adjust_enable) {
-		std::unique_lock<std::mutex> locker(pool_lock);
-		add_cv.wait(locker, [=] {return !(cache.empty()) || stop || kill_count.load() != 0; });
-		if (stop) return;
-		if (kill_count.load() != 0) {
-			--kill_count;
-			return;
-		}
-		auto task = std::move(cache.front());
-		cache.pop();
-		locker.unlock();
-		++working_count;
-		task();
-		--working_count;
-		end_cv.notify_all();
-	}
-}
-void ThreadPool::wait() {
-	if (stop) return;
-	std::unique_lock<std::mutex> locker(pool_lock);
-	end_cv.wait(locker, [=] {return stop || (working_count == 0 && cache.empty()); });
-}
-void ThreadPool::_dynamicAdjust() {
-	while (!stop) {
-		std::unique_lock<std::mutex> locker(pool_lock);
-		if (cache.size() > exist_count && exist_count < max_threads) {
-			size_t adjust_count = std::min(cache.size(), max_threads - exist_count.load());
-			for (size_t count = 0; count < adjust_count; ++count) {
-				threads.emplace_back(&ThreadPool::_exec, this);
-				++exist_count;
-			}
-			locker.unlock();
-		}
-		else if (cache.empty() && exist_count.load() > working_count.load() * 2 && exist_count > min_threads) {
-			size_t adjust_count = std::min(exist_count.load() - working_count.load(), exist_count.load() - min_threads);
-			kill_count += adjust_count;
-			locker.unlock();
-			add_cv.notify_all();
-			exist_count -= adjust_count;
-		}
-		std::this_thread::sleep_for(adjust_dura);
-	}
-}
-void ThreadPool::exit() {
-	if (!stop) {
-		stop = true;
-		add_cv.notify_all();
-		for (auto& t : threads) t.join();
-	}
-}
-ThreadPool::~ThreadPool() {
-	if (!stop) {
-		stop = true;
-		add_cv.notify_all();
-		for (auto& t : threads) t.join();
-	}
-}
+namespace nysy {
+    class ThreadPool {
+        std::list<std::thread> threads;
+        std::list<std::packaged_task<void()>> cache;
+        bool stopped = false, adjust_enabled = true;
+        std::condition_variable add_task_cv, end_task_cv;
+        std::mutex pool_lock;
+        size_t max_thread_count = 0, min_thread_count = 0;
+        std::atomic<size_t> working_thread_count = 0, alive_thread_count = 0, kill_thread_count = 0;
+        size_t manage_duration_ms = 0;
+    public:
+        ThreadPool(size_t thread_count = std::thread::hardware_concurrency(), bool adjust_enabled = true, size_t max_thread = 100, size_t min_thread = 1, size_t manage_duration_ms = 3000)
+            :manage_duration_ms(manage_duration_ms), max_thread_count(max_thread), min_thread_count(min_thread), adjust_enabled(adjust_enabled) {
+            if (adjust_enabled) {
+                assert(("Invalid Thread Count", max_thread > 0 && min_thread > 0 && max_thread >= min_thread));
+                threads.emplace_back(&ThreadPool::manage, this);
+            }
+            assert(("Invalid Thread Count",thread_count > 0));
+            for (size_t i = 0; i < thread_count; ++i) {
+                threads.emplace_back(&ThreadPool::exec, this);
+                alive_thread_count++;
+            }
+        }
+        void set_max_thread_count(size_t val) {
+            assert(("Invalid Max Thread Count",val > 0 && val >= min_thread_count));
+            max_thread_count = val;
+        }
+        void set_min_thread_count(size_t val) {
+            assert(("Invalid Min Thread Count", val > 0 && val <= max_thread_count));
+            min_thread_count = val;
+        }
+        void set_adjust_enabled(bool enabled) { adjust_enabled = enabled; }
+        size_t get_max_thread_count()const { return max_thread_count; }
+        size_t get_min_thread_count()const { return min_thread_count; }
+        size_t get_working_thread_count()const { return working_thread_count; }
+        size_t get_alive_thread_count()const { return alive_thread_count; }
+        bool is_adjust_enabled()const { return adjust_enabled; }
+        bool is_stopped()const { return stopped; }
+        template<class Fn, class... Args> auto addTask(Fn func, Args&&... args) {
+            auto uniqueFuture = std::async(std::launch::deferred, func, std::forward<Args>(args)...);
+            auto sharedFuture = uniqueFuture.share();
+            cache.emplace_back([sharedFuture]() {sharedFuture.wait(); });
+            add_task_cv.notify_one();
+            return sharedFuture;
+        }
+        template<class Fn, class... Args> auto addTask(Fn func, Args&&... args, size_t delay_ms) {
+            auto uniqueFuture = std::async(std::launch::deferred, func, std::forward<Args>(args)...);
+            auto sharedFuture = uniqueFuture.share();
+            cache.emplace_back([sharedFuture, delay_ms]() {std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms)); sharedFuture.wait(); });
+            add_task_cv.notify_one();
+            return sharedFuture;
+        }
+        void wait() {
+            if (!stopped) {
+                std::unique_lock locker(pool_lock);
+                end_task_cv.wait(locker, [=]() {return cache.empty() && working_thread_count == 0; });
+            }
+        }
+        void stop_and_join() {
+            if (!stopped) {
+                stopped = true;
+                add_task_cv.notify_all();
+                for (auto& th : threads) {
+                    th.join();
+                }
+            }
+        }
+        void stop_and_detach() {
+            if (!stopped) {
+                stopped = true;
+                add_task_cv.notify_all();
+                for (auto& th : threads) {
+                    th.detach();
+                }
+            }
+        }
+        ~ThreadPool() {
+            stop_and_detach();
+        }
+    private:
+        void exec() {
+            while (!stopped) {
+                std::unique_lock<std::mutex> locker(pool_lock);
+                add_task_cv.wait(locker, [=]() {return !(this->cache.empty()) || this->stopped; });
+                if (stopped)return;
+                std::packaged_task<void()> task = std::move(cache.front());
+                cache.pop_front();
+                locker.unlock();
+                ++working_thread_count;
+                task();
+                --working_thread_count;
+                end_task_cv.notify_all();
+            }
+        }
+        void manage() {
+            while (!stopped && adjust_enabled) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(manage_duration_ms));
+                if (stopped || !adjust_enabled)return;
+                std::unique_lock<std::mutex> locker{pool_lock};
+                if (cache.empty() && alive_thread_count > working_thread_count * 2 && alive_thread_count > min_thread_count) {
+                    kill_thread_count.store(std::min<size_t>(alive_thread_count - working_thread_count, alive_thread_count - min_thread_count));
+                    locker.unlock();
+                    add_task_cv.notify_all();
+                }
+                else if (!cache.empty() && cache.size() > alive_thread_count && alive_thread_count < max_thread_count) {
+                    size_t add_count = std::min<size_t>(max_thread_count - alive_thread_count, cache.size() - alive_thread_count);
+                    locker.unlock();
+                    for (size_t i = 0; i < add_count; ++i) {
+                        threads.emplace_back(&ThreadPool::exec, this);
+                        alive_thread_count++;
+                    }
+                }
+                else locker.unlock();
+            }
+        }
+    };
+}//namespace nysy
 #endif
