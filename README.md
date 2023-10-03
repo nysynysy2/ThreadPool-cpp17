@@ -15,23 +15,22 @@ Usage:
 
 Dynamic Adjustion Version:
 ```cpp
-ThreadPool(size_t min, size_t max, bool dynamicAdjustEnable, size_t dynamic_dura_ms, size_t cap);
-//cap:maximum capacity of the cache.
-//dynamic_dura_ms: duration for the dynamic adjustion cycle(milliseconds).
+ThreadPool(size_t thread_count, size_t min, size_t max, bool ddjust_enable, size_t adjust_duration_ms);
+//adjust_duration: duration for the dynamic adjustion cycle(milliseconds).
 
-std::future addTask(yourFunction,yourArguments...);
-std::future addTask_delay(size_t delay_ms, yourFunction,yourArguments...);//milliseconds for the delay.
+std::shared_future addTask(yourFunction,yourArguments...);
+std::shared_future addTask(size_t delay_ms, yourFunction,yourArguments...);//milliseconds for the delay.
 
 void wait(); //wait for all the working threads to finish their works.
-void close(); //close the thread pool;
+void stop(); //stop the thread pool;
 
-size_t getExistThreadCount();
-size_t getWorkingThreadCount();
-void setMinThreadCount(size_t min);
-void setMaxThreadCount(size_t max);
+size_t get_alive_thread_count();
+size_t get_working_thread_count();
+void set_min_thread_count(size_t min);
+void set_max_thread_count(size_t max);
 
-void setDynamicAdjustEnable(bool enable);
-bool isDynamicAdjustEnable();
+void set_adjust_enabled(bool enabled);
+bool is_adjust_enabled();
 ```
 
 Simple Version:
